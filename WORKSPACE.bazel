@@ -1,0 +1,8 @@
+workspace(name = "github_com_fardream_gomkl")
+
+load("//bazel:mkl_repo.bzl", "mkl_repo")
+
+mkl_repo(
+    name = "intel_mkl",
+    mkl_root = "/opt/intel/oneapi/mkl/2023.0.0",
+)
