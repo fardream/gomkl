@@ -1,0 +1,11 @@
+---
+Language:        Cpp
+BasedOnStyle:  Google
+AccessModifierOffset: -2
+ColumnLimit:     120
+---
+Language:        Proto
+BasedOnStyle:  Google
+ColumnLimit:     120
+...
+
