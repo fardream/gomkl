@@ -1,0 +1,5 @@
+cc_binary(
+    name = "mkl-test",
+    srcs = ["main.cc"],
+    deps = ["@intel_mkl//:intel_mkl_sequential"],
+)

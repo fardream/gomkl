@@ -8,4 +8,5 @@ def mkl_repo(name, mkl_root):
     native.new_local_repository(
         name = name,
         path = mkl_root,
+        build_file = "@//bazel:intel_mkl.BUILD",
     )
