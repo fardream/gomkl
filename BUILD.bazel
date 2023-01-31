@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+go_library(
+    name = "gomkl",
+    srcs = ["cblas.go"],
+    cdeps = ["@intel_mkl//:intel_mkl_sequential"],
+    cgo = True,
+    importpath = "github.com/fardream/gomkl",
+)
+
+go_test(
+    name = "cblas_test",
+    srcs = ["cblas_test.go"],
+    deps = [":gomkl"],
+)
