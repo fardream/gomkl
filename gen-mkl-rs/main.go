@@ -4,15 +4,14 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"sort"
 	"strings"
 	"text/template"
 
-	"github.com/go-clang/clang-v15/clang"
 	"github.com/spf13/cobra"
+	"modernc.org/cc/v4"
 )
 
 //go:embed rs.tmpl
@@ -160,6 +159,117 @@ func (f *funcDef) CallParams() []string {
 	return r
 }
 
+func retrieveType(r *cc.DeclarationSpecifiers) string {
+	switch r.Case {
+	case cc.DeclarationSpecifiersTypeQual:
+		return r.TypeQualifier.Token.SrcStr() + " " + retrieveType(r.DeclarationSpecifiers)
+	case cc.DeclarationSpecifiersTypeSpec:
+		return r.TypeSpecifier.Token.SrcStr()
+	case cc.DeclarationSpecifiersAlignSpec:
+		fallthrough
+	case cc.DeclarationSpecifiersFunc:
+		fallthrough
+	case cc.DeclarationSpecifiersStorage:
+		fallthrough
+	case cc.DeclarationSpecifiersAttr:
+		fallthrough
+	default:
+		return retrieveType(r.DeclarationSpecifiers)
+	}
+}
+
+func retrieveParams(r *cc.ParameterList) []funcArg {
+	if r == nil {
+		return nil
+	}
+
+	if r.ParameterDeclaration != nil {
+		// typename
+		typeName := retrieveType(r.ParameterDeclaration.DeclarationSpecifiers)
+		decl := r.ParameterDeclaration.Declarator
+		paramName := decl.DirectDeclarator.Token.SrcStr()
+		if decl.Pointer != nil && decl.Pointer.Case == cc.PointerTypeQual {
+			typeName = typeName + " *"
+		}
+		if decl.DirectDeclarator.Case == cc.DirectDeclaratorArr {
+			typeName = typeName + "[]"
+			paramName = decl.DirectDeclarator.DirectDeclarator.Token.SrcStr()
+		}
+
+		rustname, dontUse := getParamType(typeName)
+		return append([]funcArg{{
+			name:     paramName,
+			typeName: typeName,
+			rustName: rustname,
+			dontUse:  dontUse,
+		}}, retrieveParams(r.ParameterList)...)
+	}
+
+	return retrieveParams(r.ParameterList)
+}
+
+func (flist *funcListInput) retrieveFuncDef(d *cc.ExternalDeclaration) *funcDef {
+	if d == nil {
+		return nil
+	}
+
+	if d.Declaration == nil {
+		return nil
+	}
+
+	// DeclarationSpecifiers InitDeclaratorList AttributeSpecifierList ';'  // Case DeclarationDecl
+	if d.Declaration.Case != cc.DeclarationDecl {
+		return nil
+	}
+
+	if d.Declaration.InitDeclaratorList == nil {
+		return nil
+	}
+
+	if d.Declaration.InitDeclaratorList.InitDeclarator == nil {
+		return nil
+	}
+
+	//	InitDeclarator:
+	//	        Declarator Asm                  // Case InitDeclaratorDecl
+	//	|       Declarator Asm '=' Initializer  // Case InitDeclaratorInit
+	if d.Declaration.InitDeclaratorList.InitDeclarator.Case != cc.InitDeclaratorDecl {
+		return nil
+	}
+
+	decl := d.Declaration.InitDeclaratorList.InitDeclarator.Declarator.DirectDeclarator
+
+	if decl == nil {
+		return nil
+	}
+
+	// function name
+	if decl.DirectDeclarator == nil || decl.DirectDeclarator.Case != cc.DirectDeclaratorIdent {
+		return nil
+	}
+
+	name := decl.DirectDeclarator.Token.SrcStr()
+
+	is32, is64, betterName := flist.findFunc(name)
+
+	if !is32 && !is64 {
+		return nil
+	}
+
+	returnType := retrieveType(d.Declaration.DeclarationSpecifiers)
+
+	// retrieve arguments
+	fdef := funcDef{
+		RawName:    name,
+		returnType: returnType,
+		BetterName: betterName,
+		args:       retrieveParams(decl.ParameterTypeList.ParameterList),
+		is32:       is32,
+	}
+
+	return &fdef
+}
+
 func run(cmd *cobra.Command, args []string) {
 	if mklPath == "" {
 		mklRoot := os.Getenv("MKLROOT")
@@ -171,62 +281,27 @@ func run(cmd *cobra.Command, args []string) {
 
 	includePath := path.Dir(mklPath)
 
-	idx := clang.NewIndex(0, 1)
-	defer idx.Dispose()
+	compiler := getOrPanic(cc.NewConfig("", ""))
+	compiler.IncludePaths = append(compiler.IncludePaths, includePath)
 
-	tu := idx.ParseTranslationUnit(mklPath, []string{fmt.Sprintf("-I%s", includePath)}, nil, 0)
-	defer tu.Dispose()
-
-	diagnostics := tu.Diagnostics()
-	for _, d := range diagnostics {
-		log.Println("PROBLEM: ", d.Spelling())
-	}
+	ccast := getOrPanic(cc.Translate(compiler, []cc.Source{
+		{Name: "<predefined>", Value: compiler.Predefined},
+		{Name: "<builtin>", Value: cc.Builtin},
+		{Name: mklPath},
+	}))
 
 	flist := readFuncList(inputFuncsPath)
 
-	cursor := tu.TranslationUnitCursor()
-
 	funcs := make([]funcDef, 0)
 
-	cursor.Visit(func(cursor, parent clang.Cursor) (status clang.ChildVisitResult) {
-		if cursor.IsNull() {
-			return clang.ChildVisit_Continue
+	cctu := ccast.TranslationUnit
+
+	for thistu := cctu; thistu != nil; thistu = thistu.TranslationUnit {
+		f := flist.retrieveFuncDef(thistu.ExternalDeclaration)
+		if f != nil {
+			funcs = append(funcs, *f)
 		}
-
-		if cursor.Kind() != clang.Cursor_FunctionDecl {
-			return clang.ChildVisit_Continue
-		}
-
-		name := cursor.Spelling()
-
-		is32, is64, betterName := flist.findFunc(name)
-
-		if !is32 && !is64 {
-			return clang.ChildVisit_Continue
-		}
-
-		fdef := funcDef{RawName: name, is32: is32, BetterName: betterName}
-		fdef.returnType = cursor.ResultType().Spelling()
-		for i := uint32(0); i < uint32(cursor.NumArguments()); i++ {
-			arg := cursor.Argument(i)
-			paramName := arg.Spelling()
-			if paramName == "" {
-				paramName = fmt.Sprintf("p%d", i)
-			}
-			typeName := arg.Type().Spelling()
-			rustname, dontUse := getParamType(typeName)
-			fdef.args = append(fdef.args, funcArg{
-				name:     paramName,
-				typeName: typeName,
-				rustName: rustname,
-				dontUse:  dontUse,
-			})
-		}
-
-		funcs = append(funcs, fdef)
-
-		return clang.ChildVisit_Continue
-	})
+	}
 
 	rsTmpl := getOrPanic(template.New("rs-tmpl").Parse(rsTmplText))
 
