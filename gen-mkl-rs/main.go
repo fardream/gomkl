@@ -178,34 +178,48 @@ func retrieveType(r *cc.DeclarationSpecifiers) string {
 	}
 }
 
-func retrieveParams(r *cc.ParameterList) []funcArg {
+func retrieveParams(r *cc.ParameterList, i int) []funcArg {
 	if r == nil {
 		return nil
 	}
 
-	if r.ParameterDeclaration != nil {
+	paramdecl := r.ParameterDeclaration
+	if paramdecl != nil {
 		// typename
-		typeName := retrieveType(r.ParameterDeclaration.DeclarationSpecifiers)
-		decl := r.ParameterDeclaration.Declarator
-		paramName := decl.DirectDeclarator.Token.SrcStr()
-		if decl.Pointer != nil && decl.Pointer.Case == cc.PointerTypeQual {
-			typeName = typeName + " *"
+		typeName := retrieveType(paramdecl.DeclarationSpecifiers)
+		paramName := ""
+		switch paramdecl.Case {
+		case cc.ParameterDeclarationAbstract:
+			decl := paramdecl.AbstractDeclarator
+			if decl != nil &&
+				decl.Case == cc.AbstractDeclaratorDecl &&
+				decl.DirectAbstractDeclarator.Token.SrcStr() == "[" {
+				typeName = typeName + "[]"
+			}
+		case cc.ParameterDeclarationDecl:
+			decl := paramdecl.Declarator
+			paramName = decl.DirectDeclarator.Token.SrcStr()
+			if decl.Pointer != nil && decl.Pointer.Case == cc.PointerTypeQual {
+				typeName = typeName + " *"
+			}
+			if decl.DirectDeclarator.Case == cc.DirectDeclaratorArr {
+				typeName = typeName + "[]"
+				paramName = decl.DirectDeclarator.DirectDeclarator.Token.SrcStr()
+			}
 		}
-		if decl.DirectDeclarator.Case == cc.DirectDeclaratorArr {
-			typeName = typeName + "[]"
-			paramName = decl.DirectDeclarator.DirectDeclarator.Token.SrcStr()
+		if paramName == "" {
+			paramName = fmt.Sprintf("p%d", i)
 		}
-
 		rustname, dontUse := getParamType(typeName)
 		return append([]funcArg{{
 			name:     paramName,
 			typeName: typeName,
 			rustName: rustname,
 			dontUse:  dontUse,
-		}}, retrieveParams(r.ParameterList)...)
+		}}, retrieveParams(r.ParameterList, i+1)...)
 	}
 
-	return retrieveParams(r.ParameterList)
+	return retrieveParams(r.ParameterList, i+1)
 }
 
 func (flist *funcListInput) retrieveFuncDef(d *cc.ExternalDeclaration) *funcDef {
@@ -263,7 +277,7 @@ func (flist *funcListInput) retrieveFuncDef(d *cc.ExternalDeclaration) *funcDef 
 		RawName:    name,
 		returnType: returnType,
 		BetterName: betterName,
-		args:       retrieveParams(decl.ParameterTypeList.ParameterList),
+		args:       retrieveParams(decl.ParameterTypeList.ParameterList, 0),
 		is32:       is32,
 	}
 
