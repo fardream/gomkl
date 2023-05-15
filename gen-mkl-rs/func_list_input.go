@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -30,7 +31,13 @@ func readFuncList(input string) *funcListInput {
 		forFloat32: make(map[string]string),
 	}
 
-	content := string(getOrPanic(os.ReadFile(input)))
+	content := ""
+	if input == "-" {
+		content = string(getOrPanic(io.ReadAll(os.Stdin)))
+	} else {
+		content = string(getOrPanic(os.ReadFile(input)))
+	}
+
 	for _, inputline := range strings.Split(content, "\n") {
 		v := strings.TrimRight(strings.TrimLeft(inputline, " "), " ")
 		if v == "" {

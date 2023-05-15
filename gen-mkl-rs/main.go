@@ -330,14 +330,31 @@ func run(cmd *cobra.Command, args []string) {
 	orPanic(os.WriteFile(outputFile, b.Bytes(), 0o666))
 }
 
+var longDescription = `generate select mkl bindings for rust.
+
+Use - for stdin, for example
+
+  cat <<-EOF | go run github.com/fardream/gomkl/gen-mkl-rs@main -i - -o mkl.rs
+  v*Mul
+  cblas_*gemm
+  cblas_*gemv
+  cblas_*syrk
+  cblas_*swap
+  LAPACKE_*potrs
+  LAPACKE_*trtrs
+  v*RngGaussian
+  EOF
+`
+
 func main() {
 	cmd := &cobra.Command{
 		Short: "generate select bindings for rust",
 		Use:   "gen-mkl-rs",
 		Args:  cobra.NoArgs,
+		Long:  longDescription,
 	}
 
-	cmd.Flags().StringVarP(&inputFuncsPath, "input", "i", inputFuncsPath, "list of functions to generate. use * for s/d")
+	cmd.Flags().StringVarP(&inputFuncsPath, "input", "i", inputFuncsPath, "list of functions to generate. use * for s/d, use # for S/D. use - for stdin.")
 	cmd.MarkFlagFilename("input")
 	cmd.MarkFlagRequired("input")
 
