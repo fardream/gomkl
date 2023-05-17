@@ -129,6 +129,8 @@ func getParamType(t string) (string, bool) {
 		return "i8", true
 	case "int *":
 		return "*mut i32", true
+	case "const int *":
+		return "*const i32", true
 	}
 
 	if strings.HasPrefix(t, "const ") {
