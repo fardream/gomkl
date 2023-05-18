@@ -193,10 +193,15 @@ func retrieveParams(r *cc.ParameterList, i int) []funcArg {
 		switch paramdecl.Case {
 		case cc.ParameterDeclarationAbstract:
 			decl := paramdecl.AbstractDeclarator
-			if decl != nil &&
-				decl.Case == cc.AbstractDeclaratorDecl &&
-				decl.DirectAbstractDeclarator.Token.SrcStr() == "[" {
-				typeName = typeName + "[]"
+
+			if decl != nil {
+				if decl.Case == cc.AbstractDeclaratorDecl &&
+					decl.DirectAbstractDeclarator.Token.SrcStr() == "[" {
+					typeName = typeName + "[]"
+				}
+				if decl.Case == cc.AbstractDeclaratorPtr {
+					typeName = typeName + " *"
+				}
 			}
 		case cc.ParameterDeclarationDecl:
 			decl := paramdecl.Declarator
