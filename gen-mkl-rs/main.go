@@ -17,12 +17,16 @@ import (
 //go:embed rs.tmpl
 var rsTmplText string
 
+//go:embed cc.tmpl
+var ccTmplText string
+
 var (
 	mklPath          = ""
 	inputFuncsPath   = ""
 	outputFile       = ""
 	mklProviderCrate = "crate"
 	traitName        = "MKLRoutines"
+	forC             = false
 )
 
 type funcArg struct {
@@ -34,7 +38,7 @@ type funcArg struct {
 type funcDef struct {
 	RawName    string
 	is32       bool
-	returnType string
+	ReturnType string
 	args       []funcArg
 	BetterName string
 }
@@ -47,6 +51,29 @@ type tmpInput struct {
 
 func (*tmpInput) TraitName() string {
 	return traitName
+}
+
+func (f *funcDef) CParams() string {
+	ps := []string{}
+
+	for _, p := range f.args {
+		if strings.HasSuffix(p.typeName, "[]") {
+			ps = append(ps, fmt.Sprintf("%s %s[]", strings.TrimSuffix(p.typeName, "[]"), p.name))
+		} else {
+			ps = append(ps, fmt.Sprintf("%s %s", p.typeName, p.name))
+		}
+	}
+
+	return strings.Join(ps, ",")
+}
+
+func (f *funcDef) CInput() string {
+	ps := []string{}
+	for _, p := range f.args {
+		ps = append(ps, p.name)
+	}
+
+	return strings.Join(ps, ",")
 }
 
 func (i *tmpInput) UseLine() string {
@@ -97,7 +124,7 @@ func (i *tmpInput) TraitFuncs() []*funcDef {
 }
 
 func (f *funcDef) ReturnDeclare() string {
-	switch f.returnType {
+	switch f.ReturnType {
 	case "void":
 		return ""
 	case "int32_t", "int":
@@ -107,11 +134,11 @@ func (f *funcDef) ReturnDeclare() string {
 	case "size_t":
 		return "-> usize"
 	default:
-		return f.returnType
+		return f.ReturnType
 	}
 }
 
-func getParamType(t string) (string, bool) {
+func getRustParamType(t string) (string, bool) {
 	switch t {
 	case "size_t":
 		return "usize", true
@@ -144,7 +171,7 @@ func (f *funcDef) Params() []string {
 	r := []string{}
 
 	for _, p := range f.args {
-		t, _ := getParamType(p.typeName)
+		t, _ := getRustParamType(p.typeName)
 		r = append(r, fmt.Sprintf("%s: %s", p.name, t))
 	}
 
@@ -217,7 +244,7 @@ func retrieveParams(r *cc.ParameterList, i int) []funcArg {
 		if paramName == "" {
 			paramName = fmt.Sprintf("p%d", i)
 		}
-		rustname, dontUse := getParamType(typeName)
+		rustname, dontUse := getRustParamType(typeName)
 		return append([]funcArg{{
 			name:     paramName,
 			typeName: typeName,
@@ -282,7 +309,7 @@ func (flist *funcListInput) retrieveFuncDef(d *cc.ExternalDeclaration) *funcDef 
 	// retrieve arguments
 	fdef := funcDef{
 		RawName:    name,
-		returnType: returnType,
+		ReturnType: returnType,
 		BetterName: betterName,
 		args:       retrieveParams(decl.ParameterTypeList.ParameterList, 0),
 		is32:       is32,
@@ -323,16 +350,24 @@ func run(cmd *cobra.Command, args []string) {
 			funcs = append(funcs, *f)
 		}
 	}
-
-	rsTmpl := getOrPanic(template.New("rs-tmpl").Parse(rsTmplText))
-
 	var b bytes.Buffer
 
-	orPanic(rsTmpl.Execute(&b, &tmpInput{
-		funcDefs:        funcs,
-		providerCrate:   mklProviderCrate,
-		DesiredFuncList: flist.desiredFuncList,
-	}))
+	if forC {
+		ccTmpl := getOrPanic(template.New("cc-tmpl").Parse(ccTmplText))
+		orPanic(ccTmpl.Execute(&b, &tmpInput{
+			funcDefs:        funcs,
+			providerCrate:   mklProviderCrate,
+			DesiredFuncList: flist.desiredFuncList,
+		}))
+	} else {
+		rsTmpl := getOrPanic(template.New("rs-tmpl").Parse(rsTmplText))
+
+		orPanic(rsTmpl.Execute(&b, &tmpInput{
+			funcDefs:        funcs,
+			providerCrate:   mklProviderCrate,
+			DesiredFuncList: flist.desiredFuncList,
+		}))
+	}
 
 	orPanic(os.WriteFile(outputFile, b.Bytes(), 0o666))
 }
@@ -366,7 +401,7 @@ func main() {
 	cmd.MarkFlagRequired("input")
 
 	cmd.Flags().StringVarP(&outputFile, "output", "o", outputFile, "output file")
-	cmd.MarkFlagFilename("output", "rs")
+	cmd.MarkFlagFilename("output", "rs", "h")
 	cmd.MarkFlagRequired("output")
 
 	cmd.Flags().StringVarP(&mklPath, "mkl-header", "m", mklPath, "path to mkl.h file")
@@ -374,6 +409,8 @@ func main() {
 
 	cmd.Flags().StringVarP(&mklProviderCrate, "mkl-provider-crate", "c", mklProviderCrate, "mkl provider crate")
 	cmd.Flags().StringVarP(&traitName, "trait-name", "t", traitName, "trait name")
+
+	cmd.Flags().BoolVar(&forC, "for-cc", forC, "output c++")
 	cmd.Run = run
 	cmd.Execute()
 }
